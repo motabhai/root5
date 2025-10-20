@@ -1,0 +1,14 @@
+# Ignore system junk
+.DS_Store
+Thumbs.db
+
+# Ignore build outputs
+dist/
+node_modules/
+.wrangler/
+*.log
+
+# Ignore local DB and environment files
+*.sqlite
+.env
+.env.*

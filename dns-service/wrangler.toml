@@ -1,0 +1,13 @@
+# This is the configuration for your DNS microservice.
+# The 'name' field is the public name of your worker.
+name = "dns-manager"
+
+# This must match the entrypoint file wrangler created (e.g., src/index.ts)
+main = "src/index.ts"
+
+compatibility_date = "2025-10-11"
+workers_dev = false
+# --- Environment Variables ---
+# Add your Zone ID here. This is not a secret.
+[vars]
+CLOUDFLARE_ZONE_ID = "101c55ec592c44222b2fb61548a856da"
