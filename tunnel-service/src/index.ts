@@ -1,122 +1,107 @@
-// src/index.ts — Tunnel Service (final version, with base64 decode + D1 ready)
-
 export interface Env {
-  CLOUDFLARE_ACCOUNT_ID: string;
-  CLOUDFLARE_API_TOKEN: string;
-  DB?: D1Database; // Optional: if you later want to save results to D1
+  CLOUDFLARE_ACCOUNT_ID: string
+  CLOUDFLARE_API_TOKEN: string
+  DB: D1Database
+  CUSTOMERS_TABLE?: string // default 'test_customers'
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
+    const url = new URL(request.url)
+    const path = url.pathname
 
     if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_API_TOKEN) {
-      return new Response(JSON.stringify({ error: "Missing required environment variables." }), {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: 'Missing CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN' }, 500)
     }
 
-    const headers = {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
-    };
+    // Health
+    if (path === '/' && request.method === 'GET') {
+      return json({ ok: true, service: 'Tunnel Service', mode: 'cfd_tunnel' })
+    }
 
-    // ------------------------------------------------------------------------
-    //  POST /create  → Create a new Cloudflare Tunnel and return UID + Token
-    // ------------------------------------------------------------------------
-    if (path === "/create" && request.method === "POST") {
+    // Create a remotely-managed tunnel
+    if (path === '/create' && request.method === 'POST') {
       try {
-        const body = await request.json();
-        const { tunnelName, customerId } = body;
-        if (!tunnelName) throw new Error("Missing tunnelName");
+        const body = await request.json() as {
+          tunnelName?: string
+          customerId?: string | number
+          customerDomain?: string
+        }
 
-        console.log(`🚀 Creating tunnel: ${tunnelName}`);
+        const { tunnelName, customerId, customerDomain } = body || {}
+        if (!tunnelName) return json({ error: 'Missing tunnelName' }, 400)
+        if (!customerId) return json({ error: 'Missing customerId' }, 400)
 
-        // === STEP 1: Create the tunnel ===
+        console.log(`Creating remotely-managed tunnel: ${tunnelName}`)
+
         const createResp = await fetch(
           `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel`,
           {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ name: tunnelName, config_src: "cloudflare" }),
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              name: tunnelName,
+              config_src: 'cloudflare', // required for remotely-managed
+            }),
           }
-        );
+        )
 
-        const createData = await createResp.json();
+        const createData = await createResp.json()
         if (!createResp.ok) {
-          console.error("❌ Tunnel creation failed:", createData);
-          throw new Error(createData.errors?.[0]?.message || "Tunnel creation failed");
+          console.error('cfd_tunnel create error:', createData)
+          return json(
+            { error: createData?.errors?.[0]?.message || 'Tunnel creation failed', details: createData },
+            createResp.status || 500
+          )
         }
 
-        const tunnelUid = createData.result?.id;
-        if (!tunnelUid) throw new Error("Tunnel UID missing");
+        const tunnelUid: string | undefined = createData?.result?.id
+        const initialToken: string | undefined = createData?.result?.token
+        if (!tunnelUid) return json({ error: 'Tunnel UID missing in create response' }, 500)
 
-        console.log(`✅ Tunnel created: ${tunnelUid}`);
+        console.log(`Tunnel created: ${tunnelUid}`)
 
-        // === STEP 2: Retrieve tunnel token ===
-        const tokenURL = `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/cfd_tunnel/${tunnelUid}/token`;
-        const tokenResp = await fetch(tokenURL, { method: "GET", headers });
-        const rawText = await tokenResp.text();
-
-        console.log("🔍 /token raw response:", rawText);
-
-        let tunnelToken: string | null = null;
-        if (tokenResp.ok) {
-          try {
-            const tokenJson = JSON.parse(rawText);
-            const rawToken = tokenJson.result;
-
-            if (typeof rawToken === "string") {
-              // Base64 decode the new token format
-              const decoded = JSON.parse(atob(rawToken));
-              tunnelToken = decoded.s || null;
-            } else if (rawToken?.token) {
-              tunnelToken = rawToken.token;
-            }
-          } catch (err) {
-            console.warn("⚠️ Failed to decode token JSON:", err);
+        // Save to D1
+        const table = env.CUSTOMERS_TABLE || 'test_customers'
+        try {
+          // store the UID (used later to fetch fresh run tokens)
+          // store the initial token optionally (may be used immediately but it’s short-lived)
+          const stmt = env.DB.prepare(
+            `UPDATE ${table} SET tunnel_uid = ?, tunnel_token = ?, customer_domain = COALESCE(?, customer_domain) WHERE id = ?`
+          ).bind(tunnelUid, initialToken ?? null, customerDomain ?? null, customerId)
+          const res = await stmt.run()
+          if (res.success !== true) {
+            console.warn('D1 UPDATE completed but not marked success:', res)
           }
-        } else {
-          console.warn("⚠️ Token request failed with status:", tokenResp.status);
+          console.log(`Saved tunnel for customer ${customerId}`)
+        } catch (dbErr: any) {
+          console.error('Failed to save to D1:', dbErr?.message || dbErr)
+          // still return success, because tunnel exists — but report DB failure in payload
+          return json({
+            success: true,
+            tunnel: { uid: tunnelUid, initialToken },
+            warnings: ['Tunnel created, but failed to save customer row to D1'],
+          })
         }
 
-        console.log(`🎯 Token extracted: ${tunnelToken ? "OK" : "NULL"}`);
-
-        // === Optional: Save to D1 if bound ===
-        if (env.DB && customerId && tunnelUid) {
-          try {
-            await env.DB.prepare(
-              "UPDATE test_customers SET tunnel_uid = ?, tunnel_token = ? WHERE id = ?"
-            ).bind(tunnelUid, tunnelToken || null, customerId).run();
-
-            console.log(`💾 Saved tunnel for customer ${customerId}`);
-          } catch (dbErr) {
-            console.error("⚠️ Failed to save tunnel to D1:", dbErr);
-          }
-        }
-
-        return new Response(
-          JSON.stringify({ success: true, tunnelUid, tunnelToken }),
-          { headers: { "Content-Type": "application/json" } }
-        );
-
+        return json({ success: true, tunnel: { uid: tunnelUid, initialToken } })
       } catch (err: any) {
-        console.error("❌ Exception:", err.message);
-        return new Response(JSON.stringify({ error: err.message }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+        console.error('Create exception:', err?.message || err)
+        return json({ error: err?.message || 'Unhandled error' }, 500)
       }
     }
 
-    // ------------------------------------------------------------------------
-    //  Default route
-    // ------------------------------------------------------------------------
-    return new Response(
-      JSON.stringify({ message: "Tunnel Service OK" }),
-      { headers: { "Content-Type": "application/json" } }
-    );
+    return json({ error: 'Not Found' }, 404)
   },
-};
+}
+
+// Small helper
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}

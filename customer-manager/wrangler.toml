@@ -5,7 +5,10 @@ compatibility_date = "2023-10-30"
 [vars]
 # ADD THIS LINE:
 CLOUDFLARE_ZONE_NAME = "chromebased.net" # e.g., pavol-eisenberg.workers.dev
-WORKER_API_TOKEN = "0%7wQk0#KgUtbl3O"
+CLOUDFLARE_ACCOUNT_ID = "49de41efa595e159eecc15d50e321189"
+CLOUDFLARE_API_TOKEN ="fO4iDViddZXVi8L3Ogwek6gFV9af6yHFQeIztch9"
+#WORKER_API_TOKEN = "0%7wQk0#KgUtbl3O"
+CUSTOMERS_TABLE = "test_customers"
 
 
 

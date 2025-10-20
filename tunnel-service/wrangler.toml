@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2025-10-11"
 workers_dev = true
 
+[[d1_databases]]
+binding = "DB"
+database_name = "root5"
+
+
+
 [vars]
 CLOUDFLARE_ACCOUNT_ID = "49de41efa595e159eecc15d50e321189"
-CLOUDFLARE_API_TOKEN = "fO4iDViddZXVi8L3Ogwek6gFV9af6yHFQeIztch9"
+#CLOUDFLARE_API_TOKEN = "Nhpfp9ILvKq9SpDQtSpKr81L1y1ECcxLYmxP62-R"
+CUSTOMERS_TABLE = "test_customers"
+
