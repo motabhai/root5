@@ -418,16 +418,101 @@ export default {
         }
 
     if (url.pathname === "/") {
-      return new Response(`
-        <h1>ONE Worker</h1>
-        <p>Use API endpoints:</p>
-        <ul>
-          <li>POST /api/customers - Add customer</li>
-          <li>POST /api/provision - Provision all</li>
-          <li>GET /api/customers - List customers</li>
-        </ul>
-        <p>Auth token: 0%7wQk0#KgUtbl3O</p>
-      `, { headers: { "content-type": "text/html; charset=utf-8" } })
+      const customers = await listRows(env)
+      const customerRows = customers.map(c => `
+        <tr>
+          <td>${c.id}</td>
+          <td>${c.hostname}</td>
+          <td>${c.tunnel_id ? 'Yes' : 'No'}</td>
+          <td>${c.access_app_id ? 'Yes' : 'No'}</td>
+          <td><pre>${c.run_command || 'Not generated'}</pre></td>
+        </tr>
+      `).join('')
+
+      const ui = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>Customer Provisioner</title>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 2rem; background-color: #f4f6f8; color: #333; }
+            h1, h2 { color: #1a2b4d; }
+            table { width: 100%; border-collapse: collapse; margin-bottom: 2rem; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            th, td { padding: 1rem; text-align: left; border-bottom: 1px solid #ddd; }
+            th { background-color: #e9edf2; }
+            pre { background-color: #2d3748; color: #e2e8f0; padding: 0.5rem; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; }
+            form { background-color: #fff; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); display: grid; gap: 1rem; max-width: 500px; }
+            input { padding: 0.75rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1rem; }
+            button { padding: 0.75rem 1.5rem; border: none; border-radius: 4px; background-color: #2563eb; color: white; font-size: 1rem; cursor: pointer; }
+            button:hover { background-color: #1d4ed8; }
+          </style>
+        </head>
+        <body>
+          <h1>Customer Provisioner</h1>
+          
+          <h2>Existing Customers</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Hostname</th>
+                <th>Tunnel Provisioned</th>
+                <th>Access App Provisioned</th>
+                <th>Run Command</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${customerRows}
+            </tbody>
+          </table>
+
+          <h2>Provision New Customer</h2>
+          <form id="provision-form">
+            <label for="customer-id">Customer ID:</label>
+            <input type="number" id="customer-id" name="id" required>
+            
+            <label for="domain">Domain:</label>
+            <input type="text" id="domain" name="domain" value="chromebased.net" required>
+
+            <button type="submit">Provision Customer</button>
+          </form>
+          <pre id="form-output"></pre>
+
+          <script>
+            document.getElementById('provision-form').addEventListener('submit', async (e) => {
+              e.preventDefault();
+              const form = e.target;
+              const output = document.getElementById('form-output');
+              const formData = new FormData(form);
+              const id = formData.get('id');
+              const domain = formData.get('domain');
+              
+              output.textContent = 'Provisioning...';
+
+              const response = await fetch('/api/provision', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer ${env.AUTH_TOKEN}'
+                },
+                body: JSON.stringify({ id: parseInt(id), domain })
+              });
+
+              const result = await response.json();
+              output.textContent = JSON.stringify(result, null, 2);
+              
+              // Refresh the page to show the new customer in the list
+              if (response.ok && result.ok) {
+                setTimeout(() => location.reload(), 1000);
+              }
+            });
+          </script>
+        </body>
+        </html>
+      `;
+      return new Response(ui, { headers: { "content-type": "text/html; charset=utf-8" } })
     }
 
     // Secure API
@@ -526,9 +611,10 @@ export default {
         }
       }
 
-      // Step 5: Return the final command for the mini PC
+      // Step 5: Generate the run command and save it to the database
+      let run_command: string | undefined
       if (result.tunnel_token) {
-        result.run_command = `cloudflared tunnel run --token ${result.tunnel_token}`
+        run_command = `cloudflared tunnel run --token ${result.tunnel_token}`
       }
 
       // Update DB
@@ -537,13 +623,16 @@ export default {
           hostname: host,
           dns_record_id: dns_id || null,
           access_app_id: app?.id || null,
-          tunnel_id: tunnel?.id || null
+          tunnel_id: tunnel?.id || null,
+          run_command: run_command || null
         })
       } catch (e: any) {
         result.errors.push({ service: 'db', error: e.message })
       }
 
       result.ok = result.errors.length === 0
+      // Remove sensitive token from the response to the admin UI
+      delete result.tunnel_token
       return json(result)
     }
 
@@ -589,6 +678,17 @@ export default {
       })
 
       return json({ ok: true, result: out })
+    }
+
+    // Endpoint for mini PC to fetch its run command
+    const commandMatch = url.pathname.match(/^\/api\/customers\/(\d+)\/command$/)
+    if (commandMatch && req.method === "GET") {
+      const id = parseInt(commandMatch[1], 10)
+      const row: any = await getRow(env, id)
+      if (!row || !row.run_command) {
+        return text("Command not found for this customer ID", 404)
+      }
+      return json({ run_command: row.run_command })
     }
 
     return text("Not found", 404)
