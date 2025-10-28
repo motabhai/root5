@@ -79,13 +79,13 @@ describe('provision & deprovision flow', () => {
     const provisionRes = await (worker as any).fetch(provisionReq, env)
     const provisionBody = await provisionRes.json()
     expect(provisionBody.ok).toBe(true)
-    expect(provisionBody.hostname).toBe('cust1.example.com')
-    expect(provisionBody.dns_record_id).toBe('dns-1')
+    expect(provisionBody.hostname).toBe('ha.cust1.example.com')
+    expect(provisionBody.dns_record_ids).toEqual(['dns-1', 'dns-1', 'dns-1'])
 
     // DB row exists
     const row = await getRow(env, 1)
-    expect((row as any).hostname).toBe('cust1.example.com')
-    expect((row as any).dns_record_id).toBe('dns-1')
+    expect((row as any).hostname).toBe('ha.cust1.example.com')
+    expect((row as any).dns_record_ids).toEqual(['dns-1', 'dns-1', 'dns-1'])
     expect((row as any).tunnel_id).toBe('tun-1')
     expect((row as any).access_app_id).toBe('app-1')
 
@@ -100,7 +100,10 @@ describe('provision & deprovision flow', () => {
     expect(deprovBody.ok).toBe(true)
 
     const row2 = await getRow(env, 1)
-    expect((row2 as any).dns_record_id).toBe(null)
+    expect((row2 as any).dns_record_ids).toBe(null)
+    expect((row2 as any).dns_record_id_ha).toBe(null)
+    expect((row2 as any).dns_record_id_ssh).toBe(null)
+    expect((row2 as any).dns_record_id_plc).toBe(null)
     expect((row2 as any).tunnel_id).toBe(null)
     expect((row2 as any).access_app_id).toBe(null)
   })

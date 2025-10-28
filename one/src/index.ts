@@ -48,8 +48,8 @@ function requireAuth(req: Request, env: Env) {
   if (!ok) throw new Response("Unauthorized", { status: 401 })
 }
 
-function hostnameFor(id: number, baseDomain: string) {
-  return `cust${id}.${baseDomain}`
+function hostnameFor(id: number, baseDomain: string, type: "ha" | "ssh" | "plc") {
+  return `${type}.cust${id}.${baseDomain}`
 }
 
 function apiHeaders(token: string) {
@@ -387,7 +387,10 @@ export default {
             const table = env.CUSTOMERS_TABLE || "customers"
             const statements = [
               // create table (same simplified schema)
-              `CREATE TABLE IF NOT EXISTS ${table} (\n    id INTEGER PRIMARY KEY,\n    hostname TEXT UNIQUE,\n    dns_record_id TEXT,\n    tunnel_id TEXT,\n    tunnel_token TEXT,\n    access_app_id TEXT,\n    created_at TEXT,\n    updated_at TEXT\n  );`,
+              `CREATE TABLE IF NOT EXISTS ${table} (\n    id INTEGER PRIMARY KEY,\n    hostname TEXT UNIQUE,\n    dns_record_ids TEXT,\n    dns_record_id_ha TEXT,
+    dns_record_id_ssh TEXT,
+    dns_record_id_plc TEXT,
+    tunnel_id TEXT,\n    tunnel_token TEXT,\n    access_app_id TEXT,\n    created_at TEXT,\n    updated_at TEXT\n  );`,
               // quick select probe
               `SELECT 1 as ok;`,
               // try an insert
@@ -543,7 +546,7 @@ export default {
     if (url.pathname === "/api/customers" && req.method === "POST") {
       await initDb(env)
       const { id, domain } = await readBody<{ id: number; domain: string }>()
-      const host = hostnameFor(id, domain)
+      const host = hostnameFor(id, domain, "ha")
       await upsertRow(env, id, { hostname: host })
       return json({ ok: true, action: "customer_added", id, hostname: host })
     }
@@ -552,18 +555,18 @@ export default {
     if (url.pathname === "/api/dns" && req.method === "POST") {
       await initDb(env)
       console.log(`[debug] CLOUDFLARE_API_TOKEN type: ${typeof env.CLOUDFLARE_API_TOKEN}`)
-      const { id, domain } = await readBody<{ id: number; domain: string }>()
-      const host = hostnameFor(id, domain)
+      const { id, domain, type } = await readBody<{ id: number; domain: string; type: "ha" | "ssh" | "plc" }>()
+      const host = hostnameFor(id, domain, type)
       const r = await createDns(env, host)
-      await upsertRow(env, id, { hostname: host, dns_record_id: r.id })
-      return json({ ok: true, action: "dns_created", hostname: host, dns_record_id: r.id })
+      await upsertRow(env, id, { [`dns_record_id_${type}`]: r.id })
+      return json({ ok: true, action: "dns_created", hostname: host, dns_record_id: r.id, type })
     }
 
     // Provision all: DNS -> Access App -> Tunnel -> Tunnel Config -> Return token
     if (url.pathname === "/api/provision" && req.method === "POST") {
       await initDb(env)
       const { id, domain, local } = await readBody<{ id: number; domain: string; local?: string }>()
-      const host = hostnameFor(id, domain)
+      const host = hostnameFor(id, domain, "ha")
       const tunnelName = `cust${id}`
 
       const result: any = {
@@ -572,15 +575,23 @@ export default {
         errors: []
       }
 
-      // Step 1: Create DNS Record
-      let dns_id: string | undefined
-      try {
-        const d = await createDns(env, host)
-        dns_id = d.id
-        result.dns_record_id = dns_id
-      } catch (e: any) {
-        result.errors.push({ service: 'dns', error: e.message })
+      // Step 1: Create DNS Records
+      let dns_ids: string[] = []
+      const hostnamesToCreate = [
+        hostnameFor(id, domain, "ha"), // ha.cust[id].chromebased.net
+        hostnameFor(id, domain, "ssh"), // ssh.cust[id].chromebased.net
+        hostnameFor(id, domain, "plc")  // plc.cust[id].chromebased.net
+      ];
+
+      for (const h of hostnamesToCreate) {
+        try {
+          const d = await createDns(env, h);
+          dns_ids.push(d.id);
+        } catch (e: any) {
+          result.errors.push({ service: `dns-${h}`, error: e.message });
+        }
       }
+      result.dns_record_ids = dns_ids;
 
       // Step 2: Create Zero Trust Access Application
       let app: any
@@ -621,7 +632,7 @@ export default {
       try {
         await upsertRow(env, id, {
           hostname: host,
-          dns_record_id: dns_id || null,
+          dns_record_ids: dns_ids.length > 0 ? dns_ids : null,
           access_app_id: app?.id || null,
           tunnel_id: tunnel?.id || null,
           run_command: run_command || null
@@ -661,17 +672,46 @@ export default {
           out.tunnel = "error: " + e.message
         }
       }
-      if (row.dns_record_id) {
+      if (row.dns_record_ids && Array.isArray(row.dns_record_ids)) {
+        for (const recordId of row.dns_record_ids) {
+          try {
+            await deleteDns(env, recordId)
+            out[`dns-${recordId}`] = "deleted"
+          } catch (e: any) {
+            out[`dns-${recordId}`] = "error: " + e.message
+          }
+        }
+      }
+      if (row.dns_record_id_ha) {
         try {
-          await deleteDns(env, row.dns_record_id)
-          out.dns = "deleted"
+          await deleteDns(env, row.dns_record_id_ha)
+          out.dns_ha = "deleted"
         } catch (e: any) {
-          out.dns = "error: " + e.message
+          out.dns_ha = "error: " + e.message
+        }
+      }
+      if (row.dns_record_id_ssh) {
+        try {
+          await deleteDns(env, row.dns_record_id_ssh)
+          out.dns_ssh = "deleted"
+        } catch (e: any) {
+          out.dns_ssh = "error: " + e.message
+        }
+      }
+      if (row.dns_record_id_plc) {
+        try {
+          await deleteDns(env, row.dns_record_id_plc)
+          out.dns_plc = "deleted"
+        } catch (e: any) {
+          out.dns_plc = "error: " + e.message
         }
       }
 
       await upsertRow(env, id, {
-        dns_record_id: null,
+        dns_record_ids: null,
+        dns_record_id_ha: null,
+        dns_record_id_ssh: null,
+        dns_record_id_plc: null,
         tunnel_id: null,
         tunnel_token: null,
         access_app_id: null

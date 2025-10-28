@@ -118,6 +118,6 @@ describe('one worker basic', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/html')
     const text = await res.text()
-    expect(text).toContain('<h1>ONE · Customer Provisioner</h1>')
+    expect(text).toContain('<h1>Customer Provisioner</h1>')
   })
 })
