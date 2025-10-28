@@ -1,8 +1,0 @@
-name = "tunnel-service"
-main = "src/index.ts"
-compatibility_date = "2025-10-11"
-workers_dev = true
-
-[vars]
-CLOUDFLARE_ACCOUNT_ID = "49de41efa595e159eecc15d50e321189"
-CLOUDFLARE_API_TOKEN = "fO4iDViddZXVi8L3Ogwek6gFV9af6yHFQeIztch9"

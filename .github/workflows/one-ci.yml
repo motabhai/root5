@@ -1,0 +1,32 @@
+name: CI — one
+
+on:
+  push:
+    paths:
+      - 'one/**'
+  pull_request:
+    paths:
+      - 'one/**'
+
+jobs:
+  test-one:
+    name: Test `one`
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        working-directory: one
+        run: |
+          npm ci
+
+      - name: Run tests
+        working-directory: one
+        run: |
+          npm test --silent

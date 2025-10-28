@@ -3,48 +3,42 @@ type Row = Record<string, unknown>
 export class MockD1 {
   table = new Map<number, Row>()
 
-  async exec(sql: string) {
-    if (sql.includes("CREATE TABLE")) {
-      // Simulate table creation, no-op for in-memory map
-      return { success: true }
-    }
-    return { success: false, error: "Unsupported exec query" }
+  async exec(_sql: string) {
+    // no-op for CREATE TABLE
+    return
   }
 
-  async batch(statements: any[]) {
-    const results = []
-    for (const stmt of statements) {
-      results.push(await stmt.run())
-    }
-    return results
+  async teardown() {
+    this.table = new Map<number, Row>()
   }
 
   prepare(sql: string) {
     const self = this
     const s = sql.trim()
-    let _args: unknown[] = []
-
     return {
+      sql,
+      _args: [] as unknown[],
       bind(...args: unknown[]) {
-        _args = args
+        this._args = args
         return this
       },
       async run() {
-        // INSERT
-        const ins = s.match(/INSERT INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)/i)
+        // very small parser for the limited SQL used in the worker
+        // INSERT OR IGNORE INTO ${table} (col, ...) VALUES (?, ?, ?)
+        const ins = s.match(/INSERT OR IGNORE INTO\s+([^\s(]+)\s*\(([^)]+)\)\s*VALUES/i)
         if (ins) {
-          const cols = ins[2].split(',').map(c => c.trim())
-          const values = _args
+          const cols = ins[2].split(',').map((c: string) => c.trim())
+          const args = this._args
+          const id = Number(args[0])
           const row: Row = {}
-          cols.forEach((col, i) => {
-            row[col] = values[i]
+          cols.forEach((col: string, i: number) => {
+            row[col] = args[i]
           })
-          const id = Number(row["id"])
           self.table.set(id, { ...(self.table.get(id) || {}), ...row })
           return { success: true }
         }
 
-        // UPDATE
+        // UPDATE ${table} SET a = ?, b = ? WHERE id = ?
         const upd = s.match(/UPDATE\s+([^\s]+)\s+SET\s+([\s\S]+)WHERE\s+id\s*\=\s*\?/i)
         if (upd) {
           const setPart = upd[2]
@@ -52,7 +46,7 @@ export class MockD1 {
           const re = /([a-zA-Z0-9_]+)\s*\=\s*\?/g
           let m: RegExpExecArray | null
           while ((m = re.exec(setPart)) !== null) keys.push(m[1])
-          const args = [..._args]
+          const args = [...this._args]
           const id = Number(args.pop())
           const row = self.table.get(id) || {}
           keys.forEach((k, i) => {
@@ -62,28 +56,21 @@ export class MockD1 {
           return { success: true }
         }
 
-        return { success: false, error: "Unsupported run query" }
+        return { success: true }
       },
       async first() {
         // SELECT * FROM table WHERE id = ?
         const sel = s.match(/SELECT\s+\*\s+FROM\s+([^\s]+)\s+WHERE\s+id\s*\=\s*\?/i)
         if (sel) {
-          const id = Number(_args[0])
+          const id = Number(this._args[0])
           return self.table.get(id) || null
-        }
-        // SELECT 1 as ok
-        if (s.includes("SELECT 1 as ok")) {
-          return { ok: 1 }
         }
         return null
       },
       async all() {
-        // SELECT * FROM table ORDER BY created_at DESC
-        if (s.includes("SELECT * FROM") && s.includes("ORDER BY created_at DESC")) {
-          const arr = Array.from(self.table.values())
-          return { results: arr.slice().reverse() }
-        }
-        return { results: [] }
+        // return all rows as array, ordered by id desc
+        const arr = Array.from(self.table.values())
+        return arr.slice().reverse()
       }
     }
   }

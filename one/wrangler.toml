@@ -1,25 +1,22 @@
 name = "one"
 main = "src/index.ts"
-compatibility_date = "2025-10-26"
+compatibility_date = "2023-10-26"
 workers_dev = true
 
+[build]
+
 [vars]
-# Optional Zero Trust defaults
 ACCESS_APP_NAME_PREFIX = "cust-"
-ACCESS_CERT_REQUIRED = "false"   # set to "true" to require certificate rule in Access policy
+ACCESS_CERT_REQUIRED = "true"
 CLOUDFLARE_ZONE_ID = "101c55ec592c44222b2fb61548a856da"
 CLOUDFLARE_ACCOUNT_ID = "49de41efa595e159eecc15d50e321189"
 AUTH_TOKEN = "0%7wQk0#KgUtbl3O"
 CLOUDFLARE_API_TOKEN = "e80PFHtfvfyRzPE5ze1zmRca_qgpBTVq-9CO8YPg"
 TUNNEL_SERVICE_TOKEN = "fO4iDViddZXVi8L3Ogwek6gFV9af6yHFQeIztch9"
 DNS_SERVICE_TOKEN = "40Ujho-uHDCrI3Zf31tdGWcZlgZ_8dqhVQd0nm5F"
-ZTNA_TOKEN = "IL7KAfoxGmETXNFYsbHK7nrp95FUfRt-Q4b06XtR"
+ZTNA_TOKEN = "hrJsCPeNDEVq-R4HLDdlbDJveCk3qE2-eM3E00EP"
 
-# D1 database binding removed - using in-memory storage
-
-# Optional: production route
-[env.production]
-route = { pattern = "one.chromebased.net", zone_name = "chromebased.net" }
-
-[env.production.vars]
-ACCESS_CERT_REQUIRED = "true"
+[[d1_databases]]
+binding = "DB"
+database_name = "one"
+database_id = "cd4a93be-c1c7-4000-bf26-35a028dc37ce"

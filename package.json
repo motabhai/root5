@@ -1,0 +1,16 @@
+{
+  "name": "root5-project",
+  "private": true,
+  "workspaces": [
+    "one",
+    "customer-manager",
+    "dns-service",
+    "tunnel-service",
+    "zerotrust-service",
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "lint": "npm lint --workspaces --if-present"
+  }
+}

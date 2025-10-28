@@ -1,0 +1,76 @@
+name: Deploy — one
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'one/**'
+  workflow_dispatch: {}
+
+jobs:
+  deploy-one:
+    name: Deploy `one` to Cloudflare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'one/package-lock.json'
+
+      - name: Install dependencies
+        working-directory: one
+        run: npm ci
+
+      - name: Upload `AUTH_TOKEN` to Cloudflare (worker secret)
+        working-directory: one
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [ -z "${{ secrets.AUTH_TOKEN }}" ]; then
+            echo "No AUTH_TOKEN secret found in GitHub Secrets; skipping secret upload"
+          else
+            printf "%s" "${{ secrets.AUTH_TOKEN }}" | npx wrangler secret put AUTH_TOKEN
+          fi
+
+      - name: Deploy with Wrangler and capture URL
+        id: deploy
+        working-directory: one
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_ZONE_ID: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --remote | tee deploy_output.txt
+          # Try to extract the first https:// URL from the deploy output
+          url=$(grep -oE 'https?://[^[:space:]]+' deploy_output.txt | head -n 1 || true)
+          echo "deploy_url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Call /test to initialize D1 (best-effort)
+        working-directory: one
+        env:
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+        run: |
+          set -e
+          # prefer captured deploy URL, otherwise fall back to configured production route
+          if [ -n "${{ steps.deploy.outputs.deploy_url }}" ]; then
+            base_url="${{ steps.deploy.outputs.deploy_url }}"
+          else
+            base_url="https://one.chromebased.net"
+          fi
+          test_url="$base_url/test"
+          echo "Calling test URL: $test_url"
+          # call with Authorization header if secret is present; ignore failure
+          if [ -n "$AUTH_TOKEN" ]; then
+            curl -sS -X GET "$test_url" -H "Authorization: Bearer $AUTH_TOKEN" || true
+          else
+            curl -sS -X GET "$test_url" || true
+          fi
+
+      - name: Post-deploy note
+        run: echo "Deployed 'one'. D1 table create attempted via /test (best-effort)."

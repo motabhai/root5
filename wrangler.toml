@@ -1,0 +1,24 @@
+name = "one"
+main = "src/index.ts"
+compatibility_date = "2025-10-26"
+workers_dev = true
+
+[vars]
+# Optional Zero Trust defaults
+ACCESS_APP_NAME_PREFIX = "cust-"
+ACCESS_CERT_REQUIRED = "false"   # set to "true" to require certificate rule in Access policy
+CLOUDFLARE_ZONE_ID = "101c55ec592c44222b2fb61548a856da"
+CLOUDFLARE_ACCOUNT_ID = "49de41efa595e159eecc15d50e321189"
+
+# D1 database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "root5"
+database_id = "4b236e60-9534-448b-a5a8-778c7cd70803"
+
+# Optional: production route
+[env.production]
+route = { pattern = "one.chromebased.net", zone_name = "chromebased.net" }
+
+[env.production.vars]
+ACCESS_CERT_REQUIRED = "true"

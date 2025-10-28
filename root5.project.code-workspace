@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "Z:/root5.project"
+		},
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"powershell.cwd": "root5.project"
+	}
+}
